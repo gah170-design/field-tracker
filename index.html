@@ -29,12 +29,18 @@ html, body {
 /* ── HEADER ── */
 header {
   background:var(--panel); border-bottom:2px solid var(--border);
-  padding:8px 12px; display:flex; align-items:center;
-  justify-content:space-between; flex-shrink:0; gap:8px;
-  padding-top:calc(8px + env(safe-area-inset-top));
+  padding:6px 12px; flex-shrink:0;
+  padding-top:calc(6px + env(safe-area-inset-top));
+  display:flex; flex-direction:column; gap:6px;
+}
+.header-row1 {
+  display:flex; align-items:center; justify-content:space-between; gap:8px;
+}
+.header-row2 {
+  display:flex; align-items:center; gap:6px; flex-wrap:nowrap; overflow:hidden;
 }
 header h1 {
-  font-family:'Bebas Neue'; font-size:1.5rem;
+  font-family:'Bebas Neue'; font-size:1.4rem;
   color:var(--hay); letter-spacing:2px; white-space:nowrap; flex-shrink:0;
 }
 .header-right { display:flex; align-items:center; gap:8px; min-width:0; }
@@ -296,19 +302,19 @@ header h1 {
 <body>
 
 <header>
-  <h1>🌾 FIELD TRACKER</h1>
-  <div class="header-right">
-    <button id="fields-btn" onclick="openFieldsPanel()" title="Manage Fields">
-      <span>🗺</span> FIELDS
-    </button>
+  <div class="header-row1">
+    <h1>🌾 FIELD TRACKER</h1>
+    <div class="status-indicator">
+      <div class="dot" id="status-dot"></div>
+      <span id="status-text">IDLE</span>
+    </div>
+  </div>
+  <div class="header-row2">
+    <button id="fields-btn" onclick="openFieldsPanel()">🗺 FIELDS</button>
     <div id="vehicle-chip" onclick="openPicker(false)">
       <span class="chip-icon">🚜</span>
       <span class="chip-name" id="chip-name">Select Rig</span>
       <span class="chip-change">▾ CHANGE</span>
-    </div>
-    <div class="status-indicator">
-      <div class="dot" id="status-dot"></div>
-      <span id="status-text">IDLE</span>
     </div>
   </div>
 </header>
