@@ -400,8 +400,8 @@ let _pickerIsFirstLaunch = false;
 // LEAFLET MAP
 // ═══════════════════════════════════════════
 const map = L.map('map', {
-  center: [41.5, -93.5],   // default center (Iowa) — snaps to GPS on first fix
-  zoom: 17,
+  center: [39, -98],   // center of US — zooms to actual GPS immediately on first fix
+  zoom: 4,
   zoomControl: false,
   attributionControl: true,
 });
@@ -586,23 +586,26 @@ function updateDist() {
 // ═══════════════════════════════════════════
 // GPS
 // ═══════════════════════════════════════════
+let _firstFix = true; // fly to location on very first GPS fix
+
 function initGPS() {
   if (!navigator.geolocation) { showToast('GPS NOT SUPPORTED'); return; }
-  navigator.geolocation.getCurrentPosition(onGPSSuccess, onGPSError, { enableHighAccuracy:true, timeout:15000 });
-  state.watchId = navigator.geolocation.watchPosition(onGPSUpdate, onGPSError, { enableHighAccuracy:true, maximumAge:2000 });
+  // watchPosition alone is enough — no need for separate getCurrentPosition
+  state.watchId = navigator.geolocation.watchPosition(onGPSUpdate, onGPSError, {
+    enableHighAccuracy: true,
+    maximumAge: 0,        // never use a cached position
+    timeout: 30000,
+  });
 }
 
 function onGPSSuccess(pos) {
-  state.gpsReady = true;
-  const lat = pos.coords.latitude, lng = pos.coords.longitude;
-  map.setView([lat, lng], 17);
+  // kept for compatibility but watchPosition handles everything now
   onGPSUpdate(pos);
 }
 
 function onGPSError(e) {
   console.warn('GPS error:', e);
-  document.getElementById('gps-coords').textContent = 'GPS: unavailable';
-  // Still mark ready so app is usable (user can pan map manually)
+  document.getElementById('gps-coords').textContent = 'GPS: check permissions';
   if (!state.gpsReady) {
     state.gpsReady = true;
     refreshStartBtn();
@@ -612,14 +615,23 @@ function onGPSError(e) {
 
 function onGPSUpdate(pos) {
   const lat = pos.coords.latitude, lng = pos.coords.longitude;
-  state.currentPos = { lat, lng, accuracy: pos.coords.accuracy };
-  document.getElementById('gps-coords').textContent  = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
-  document.getElementById('gps-accuracy').textContent = `±${Math.round(pos.coords.accuracy)}m`;
+  const acc = pos.coords.accuracy;
+  state.currentPos = { lat, lng, accuracy: acc };
+  document.getElementById('gps-coords').textContent   = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+  document.getElementById('gps-accuracy').textContent = `±${Math.round(acc)}m`;
 
   updatePosMarker(lat, lng);
 
-  // Keep map centered while spreading (not when user is panning)
-  if (state.spreading) map.panTo([lat, lng], { animate: true, duration: 0.5 });
+  // On very first fix, fly straight to the actual location at field zoom
+  if (_firstFix) {
+    _firstFix = false;
+    map.flyTo([lat, lng], 17, { animate: true, duration: 1.2 });
+  }
+
+  // Keep map centered while spreading
+  if (state.spreading && !state.paused) {
+    map.panTo([lat, lng], { animate: true, duration: 0.5 });
+  }
 
   if (state.spreading && !state.paused && state.currentLoad) {
     const path = state.currentLoad.path;
@@ -633,6 +645,7 @@ function onGPSUpdate(pos) {
   if (!state.gpsReady) {
     state.gpsReady = true;
     refreshStartBtn();
+    showToast('GPS LOCKED');
   }
 }
 
@@ -953,10 +966,13 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js').catch(e => console.warn('SW:', e));
 }
 
-// Start GPS
+// Start GPS — watchPosition with maximumAge:0 forces a fresh fix every time
 if (navigator.geolocation) {
-  navigator.geolocation.getCurrentPosition(onGPSSuccess, onGPSError, { enableHighAccuracy:true, timeout:10000 });
-  state.watchId = navigator.geolocation.watchPosition(onGPSUpdate, onGPSError, { enableHighAccuracy:true, maximumAge:2000 });
+  state.watchId = navigator.geolocation.watchPosition(onGPSUpdate, onGPSError, {
+    enableHighAccuracy: true,
+    maximumAge: 0,
+    timeout: 30000,
+  });
 } else {
   onGPSError({ message: 'not supported' });
 }
