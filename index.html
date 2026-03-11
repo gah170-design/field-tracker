@@ -1450,7 +1450,11 @@ Include 8-20 points tracing the field perimeter clockwise. If you cannot identif
     })
   });
 
-  if (!response.ok) throw new Error(`API ${response.status}`);
+  if (!response.ok) {
+    const errBody = await response.json().catch(() => ({}));
+    const msg = errBody?.error?.message || JSON.stringify(errBody);
+    throw new Error(`API ${response.status}: ${msg}`);
+  }
   const data = await response.json();
   const text = data.content.map(c => c.text || '').join('');
   const clean = text.replace(/```json|```/g,'').trim();
