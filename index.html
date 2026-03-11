@@ -345,6 +345,15 @@ header h1 {
   </div>
 
   <div id="toast"></div>
+
+  <!-- Floating capture button shown when framing a field for AI boundary -->
+  <div id="ai-capture-btn" style="display:none;position:absolute;bottom:20px;left:50%;transform:translateX(-50%);z-index:1002;flex-direction:column;align-items:center;gap:8px">
+    <div style="background:rgba(26,18,8,0.9);border:1px solid var(--border);border-radius:6px;padding:6px 12px;font-size:0.6rem;color:var(--muted);white-space:nowrap">Pan &amp; zoom so your field fills the screen</div>
+    <button style="background:linear-gradient(135deg,#2d5a23,#3d7a30);border:2px solid var(--bright-green);border-radius:10px;padding:14px 28px;font-family:'Bebas Neue';font-size:1.2rem;letter-spacing:2px;color:#a8f09a;cursor:pointer;box-shadow:0 4px 16px rgba(109,191,90,0.4)">
+      📸 CAPTURE &amp; DETECT
+    </button>
+    <button onclick="cancelAICapture()" style="background:none;border:none;color:var(--muted);font-size:0.65rem;cursor:pointer;font-family:'IBM Plex Mono'">cancel</button>
+  </div>
 </div>
 
 <div id="controls">
@@ -1216,20 +1225,32 @@ function startAIBoundary() {
   const name  = document.getElementById('field-form-name').value.trim();
   const acres = parseFloat(document.getElementById('field-form-acres').value) || null;
   if (!name) { showToast('ENTER A FIELD NAME FIRST'); return; }
-  if (!state.currentPos && !map.getCenter()) { showToast('NEED LOCATION — ENABLE GPS OR PAN MAP'); return; }
 
+  // Close form — user can now pan/zoom the main map to frame their field
   document.getElementById('new-field-modal').classList.remove('open');
 
-  const center = state.currentPos
-    ? { lat: state.currentPos.lat, lng: state.currentPos.lng }
-    : { lat: map.getCenter().lat, lng: map.getCenter().lng };
+  // Show a toast guiding them to frame the field, then tap the floating capture button
+  showToast('ZOOM MAP TO YOUR FIELD, THEN TAP 📸');
 
-  _aiBoundaryState.centerLat = center.lat;
-  _aiBoundaryState.centerLng = center.lng;
-  _aiBoundaryState.zoom = 17;
+  // Show a floating "capture" button over the map
+  document.getElementById('ai-capture-btn').style.display = 'flex';
+  document.getElementById('ai-capture-btn').onclick = () => captureMapAndDetect(name, acres);
+}
+
+function captureMapAndDetect(name, acres) {
+  // Hide capture button
+  document.getElementById('ai-capture-btn').style.display = 'none';
+
+  // Snapshot the current map view bounds and zoom
+  const mapBounds = map.getBounds();
+  const mapZoom   = map.getZoom();
+  const center    = map.getCenter();
+
   _aiBoundaryState.pendingBoundary = null;
+  _aiBoundaryState.pendingName  = name;
+  _aiBoundaryState.pendingAcres = acres;
 
-  // Build Esri tile image URL for current view
+  // Build canvas sized to modal width
   const canvas = document.getElementById('ai-canvas');
   const W = Math.min(window.innerWidth - 56, 420);
   const H = Math.round(W * 0.75);
@@ -1237,57 +1258,51 @@ function startAIBoundary() {
   canvas.height = H;
   canvas.style.height = H + 'px';
 
-  // Use zoom 16 for wider field view
-  _aiBoundaryState.zoom = 16;
+  // Use current map bounds for the Esri export
+  const bbox = {
+    west:  mapBounds.getWest(),
+    east:  mapBounds.getEast(),
+    south: mapBounds.getSouth(),
+    north: mapBounds.getNorth(),
+  };
+  _aiBoundaryState.bbox    = bbox;
+  _aiBoundaryState.canvasW = W;
+  _aiBoundaryState.canvasH = H;
 
-  // Use Esri static map export
-  const bbox = centerToBbox(center.lat, center.lng, _aiBoundaryState.zoom, W, H);
   const imgUrl = `https://server.arcgisonline.com/arcgis/rest/services/World_Imagery/MapServer/export?bbox=${bbox.west},${bbox.south},${bbox.east},${bbox.north}&bboxSR=4326&size=${W},${H}&imageSR=4326&format=jpg&f=image`;
 
-  // Draw loading state
+  // Draw loading state on canvas
   const ctx = canvas.getContext('2d');
   ctx.fillStyle = '#2a3a1a';
-  ctx.fillRect(0,0,W,H);
+  ctx.fillRect(0, 0, W, H);
   ctx.fillStyle = '#c8a84b';
   ctx.font = 'bold 14px monospace';
   ctx.textAlign = 'center';
   ctx.fillText('Loading satellite...', W/2, H/2);
 
   document.getElementById('ai-modal-title').textContent = 'TAP YOUR FIELD';
-  document.getElementById('ai-instructions').textContent = 'Tap anywhere inside the field you want to outline. AI will trace the boundary.';
+  document.getElementById('ai-instructions').textContent = 'Tap anywhere inside the field to outline it.';
   document.getElementById('ai-spinner').style.display = 'none';
   document.getElementById('ai-redo-btn').style.display = 'none';
   document.getElementById('ai-accept-btn').style.display = 'none';
   document.getElementById('ai-result-info').textContent = '';
   document.getElementById('ai-boundary-modal').classList.add('open');
-  map.dragging.disable();
-  map.touchZoom.disable();
-  map.scrollWheelZoom.disable();
 
-  // Load satellite image onto canvas
+  // Load satellite image
   const img = new Image();
   img.crossOrigin = 'anonymous';
   img.onload = () => {
     ctx.drawImage(img, 0, 0, W, H);
     _aiBoundaryState.tileImg = img;
-    _aiBoundaryState.bbox = bbox;
-    _aiBoundaryState.canvasW = W;
-    _aiBoundaryState.canvasH = H;
-    // Draw crosshair at center
     drawCrosshair(ctx, W/2, H/2);
-    // Enable tap
     canvas.onclick = onAICanvasTap;
-    document.getElementById('ai-instructions').textContent = 'Tap anywhere inside the field you want to outline.';
+    document.getElementById('ai-instructions').textContent = 'Tap anywhere inside your field.';
   };
   img.onerror = () => {
-    // Fallback: use Leaflet map screenshot approach with tile URL
-    ctx.fillStyle = '#1a1208';
-    ctx.fillRect(0,0,W,H);
-    ctx.fillStyle = '#c8a84b';
-    ctx.textAlign = 'center';
+    ctx.fillStyle = '#1a1208'; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle = '#c8a84b'; ctx.textAlign = 'center';
     ctx.fillText('Could not load satellite image.', W/2, H/2 - 10);
-    ctx.fillStyle = '#8a7055';
-    ctx.font = '11px monospace';
+    ctx.fillStyle = '#8a7055'; ctx.font = '11px monospace';
     ctx.fillText('Check internet connection.', W/2, H/2 + 10);
   };
   img.src = imgUrl;
@@ -1462,21 +1477,18 @@ function redoAIBoundary() {
   canvas.onclick = onAICanvasTap;
 }
 
+function cancelAICapture() {
+  document.getElementById('ai-capture-btn').style.display = 'none';
+  setTimeout(() => openNewFieldForm(document.getElementById('field-form-id').value || null), 150);
+}
+
 function acceptAIBoundary() {
-  const name  = document.getElementById('field-form-name').value.trim();
-  const acres = parseFloat(document.getElementById('field-form-acres').value) || null;
   document.getElementById('ai-boundary-modal').classList.remove('open');
-  map.dragging.enable();
-  map.touchZoom.enable();
-  map.scrollWheelZoom.enable();
-  _saveField(name, acres, _aiBoundaryState.pendingBoundary);
+  _saveField(_aiBoundaryState.pendingName, _aiBoundaryState.pendingAcres, _aiBoundaryState.pendingBoundary);
 }
 
 function closeAIBoundary() {
   document.getElementById('ai-boundary-modal').classList.remove('open');
-  map.dragging.enable();
-  map.touchZoom.enable();
-  map.scrollWheelZoom.enable();
   setTimeout(() => {
     document.getElementById('field-form-id').value
       ? openNewFieldForm(document.getElementById('field-form-id').value)
