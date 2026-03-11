@@ -1,0 +1,965 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Field Tracker">
+<meta name="theme-color" content="#231a0e">
+<title>Field Tracker</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+:root {
+  --hay:#c8a84b; --green:#4a7c3f; --bright-green:#6dbf5a;
+  --red:#c0392b; --bg:#1a1208; --panel:#231a0e;
+  --border:#4a3520; --text:#e8d5b0; --muted:#8a7055;
+}
+html, body {
+  background:var(--bg); color:var(--text);
+  font-family:'IBM Plex Mono',monospace;
+  height:100%; height:100dvh;
+  display:flex; flex-direction:column; overflow:hidden;
+}
+
+/* ── HEADER ── */
+header {
+  background:var(--panel); border-bottom:2px solid var(--border);
+  padding:8px 12px; display:flex; align-items:center;
+  justify-content:space-between; flex-shrink:0; gap:8px;
+  padding-top:calc(8px + env(safe-area-inset-top));
+}
+header h1 {
+  font-family:'Bebas Neue'; font-size:1.5rem;
+  color:var(--hay); letter-spacing:2px; white-space:nowrap; flex-shrink:0;
+}
+.header-right { display:flex; align-items:center; gap:8px; min-width:0; }
+#vehicle-chip {
+  display:flex; align-items:center; gap:5px;
+  background:rgba(74,53,32,0.7); border:1px solid var(--border);
+  border-radius:20px; padding:5px 10px 5px 8px;
+  cursor:pointer; transition:border-color 0.15s; min-width:0;
+}
+#vehicle-chip:hover { border-color:var(--hay); }
+#vehicle-chip:active { transform:scale(0.97); }
+.chip-icon { font-size:0.9rem; flex-shrink:0; }
+.chip-name {
+  font-family:'Bebas Neue'; font-size:0.9rem; color:var(--hay);
+  letter-spacing:1px; white-space:nowrap; overflow:hidden;
+  text-overflow:ellipsis; max-width:100px;
+}
+.chip-change { font-size:0.5rem; color:var(--muted); white-space:nowrap; flex-shrink:0; }
+.status-indicator { display:flex; align-items:center; gap:4px; font-size:0.6rem; color:var(--muted); flex-shrink:0; }
+.dot { width:7px; height:7px; border-radius:50%; background:var(--muted); }
+.dot.spreading { background:var(--bright-green); box-shadow:0 0 6px var(--bright-green); animation:pulse 1s infinite; }
+.dot.idle { background:var(--hay); }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+/* ── MAP ── */
+#map-container { flex:1; position:relative; overflow:hidden; }
+#map { width:100%; height:100%; }
+
+/* Hide Leaflet attribution clutter a bit */
+.leaflet-control-attribution { font-size:0.5rem !important; opacity:0.6; }
+.leaflet-control-zoom { display:none; } /* we handle zoom via pinch */
+
+/* Overlays on top of map */
+#legend {
+  position:absolute; top:10px; left:10px;
+  background:rgba(26,18,8,0.88); border:1px solid var(--border);
+  border-radius:6px; padding:8px 12px; font-size:0.65rem;
+  max-width:175px; pointer-events:none; z-index:1000;
+}
+#legend h3 { font-family:'Bebas Neue'; font-size:0.9rem; color:var(--hay); margin-bottom:6px; letter-spacing:1px; }
+.legend-item { display:flex; align-items:center; gap:6px; margin-bottom:3px; color:var(--text); line-height:1.3; }
+.legend-swatch { width:22px; height:4px; border-radius:2px; flex-shrink:0; }
+
+#gps-info {
+  position:absolute; bottom:10px; left:10px;
+  background:rgba(26,18,8,0.85); border:1px solid var(--border);
+  border-radius:6px; padding:6px 10px; font-size:0.6rem;
+  color:var(--muted); pointer-events:none; z-index:1000;
+}
+#history-toggle {
+  position:absolute; top:10px; right:10px;
+  background:rgba(26,18,8,0.88); border:1px solid var(--border);
+  border-radius:6px; padding:6px 10px;
+  font-family:'IBM Plex Mono'; font-size:0.65rem;
+  color:var(--hay); cursor:pointer; z-index:1000;
+}
+
+/* ── HISTORY PANEL ── */
+#history-panel {
+  position:absolute; top:0; right:0; bottom:0; width:255px;
+  background:rgba(26,18,8,0.97); border-left:2px solid var(--border);
+  padding:12px; overflow-y:auto;
+  transform:translateX(100%); transition:transform 0.25s ease; z-index:1001;
+}
+#history-panel.open { transform:translateX(0); }
+#history-panel h3 { font-family:'Bebas Neue'; font-size:1.1rem; color:var(--hay); letter-spacing:2px; margin-bottom:10px; }
+.load-item { padding:8px; border-bottom:1px solid var(--border); font-size:0.62rem; }
+.load-item .load-num { font-family:'Bebas Neue'; font-size:1rem; }
+.load-item .load-meta { color:var(--muted); margin-top:2px; }
+.load-item .load-gal-acre { color:var(--bright-green); margin-top:3px; }
+.close-btn { float:right; background:none; border:none; color:var(--muted); font-size:1.2rem; cursor:pointer; }
+
+/* ── TOAST ── */
+#toast {
+  position:absolute; bottom:16px; left:50%;
+  transform:translateX(-50%) translateY(80px);
+  background:var(--hay); color:var(--bg);
+  font-family:'Bebas Neue'; font-size:1rem; letter-spacing:2px;
+  padding:10px 20px; border-radius:6px;
+  transition:transform 0.3s ease; z-index:1002; white-space:nowrap;
+  pointer-events:none;
+}
+#toast.show { transform:translateX(-50%) translateY(0); }
+
+/* ── CONTROLS ── */
+#controls {
+  background:var(--panel); border-top:2px solid var(--border);
+  padding:8px 12px calc(12px + env(safe-area-inset-bottom));
+  flex-shrink:0;
+}
+.session-info {
+  display:grid; grid-template-columns:1fr 1px 1fr 1px 1fr 1px 1fr;
+  align-items:center; margin-bottom:8px; padding:6px 4px;
+  background:var(--bg); border:1px solid var(--border); border-radius:6px;
+}
+.session-stat { text-align:center; padding:0 2px; }
+.session-stat .num { font-family:'Bebas Neue'; font-size:1.7rem; color:var(--hay); line-height:1; }
+.session-stat .num.sm { font-size:1.25rem; }
+.session-stat .label { font-size:0.5rem; color:var(--muted); text-transform:uppercase; letter-spacing:1px; }
+.divider { width:1px; height:34px; background:var(--border); }
+
+.btn-row-top    { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:8px; }
+.btn-row-bottom { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.btn {
+  padding:13px 6px; border:none; border-radius:8px;
+  font-family:'Bebas Neue'; font-size:1.2rem; letter-spacing:2px;
+  cursor:pointer; transition:transform 0.1s, box-shadow 0.1s;
+  -webkit-tap-highlight-color:transparent; touch-action:manipulation;
+  display:flex; flex-direction:column; align-items:center; gap:3px;
+}
+.btn-bottom { padding:20px 6px; font-size:1.4rem; }
+.btn:active { transform:scale(0.95); }
+.btn .icon { font-size:1.3rem; line-height:1; }
+.btn-bottom .icon { font-size:1.6rem; }
+.btn-new   { background:linear-gradient(135deg,#5c3d20,#7a5230); color:var(--hay); border:2px solid var(--hay); box-shadow:0 4px 12px rgba(200,168,75,0.2); }
+.btn-start { background:linear-gradient(135deg,#2d5a23,#3d7a30); color:#a8f09a; border:2px solid var(--bright-green); box-shadow:0 4px 12px rgba(109,191,90,0.25); }
+.btn-start:disabled { background:#2a2a2a; color:#555; border-color:#444; box-shadow:none; }
+.btn-stop  { background:linear-gradient(135deg,#5a1a1a,#8a2020); color:#ffaaaa; border:2px solid var(--red); box-shadow:0 4px 12px rgba(192,57,43,0.25); }
+.btn-stop:disabled  { background:#2a2a2a; color:#555; border-color:#444; box-shadow:none; }
+.btn-pause { background:linear-gradient(135deg,#3a3010,#5a4a18); color:#ffe97a; border:2px solid #c8a830; box-shadow:0 4px 12px rgba(200,168,48,0.2); }
+.btn-pause:disabled { background:#2a2a2a; color:#555; border-color:#444; box-shadow:none; }
+.btn-pause.paused   { background:linear-gradient(135deg,#1a2a3a,#2a4a5a); color:#7adcff; border-color:#4ab8e0; box-shadow:0 4px 12px rgba(74,184,224,0.25); animation:pausePulse 1.4s ease-in-out infinite; }
+@keyframes pausePulse { 0%,100%{box-shadow:0 4px 12px rgba(74,184,224,0.25)} 50%{box-shadow:0 4px 20px rgba(74,184,224,0.6)} }
+
+/* ── MODALS ── */
+.modal-backdrop {
+  position:fixed; inset:0; background:rgba(0,0,0,0.78);
+  display:flex; align-items:center; justify-content:center;
+  z-index:2000; padding:16px;
+  opacity:0; pointer-events:none; transition:opacity 0.2s;
+}
+.modal-backdrop.open { opacity:1; pointer-events:all; }
+.modal {
+  background:var(--panel); border:2px solid var(--border);
+  border-radius:14px; width:100%; max-width:390px;
+  max-height:88dvh; overflow-y:auto;
+  transform:translateY(20px); transition:transform 0.2s;
+}
+.modal-backdrop.open .modal { transform:translateY(0); }
+.modal-header {
+  padding:16px 16px 12px; border-bottom:1px solid var(--border);
+  display:flex; align-items:center; justify-content:space-between;
+  position:sticky; top:0; background:var(--panel); z-index:1;
+}
+.modal-header h2 { font-family:'Bebas Neue'; font-size:1.4rem; color:var(--hay); letter-spacing:2px; }
+.modal-body { padding:16px; }
+.modal-close { background:none; border:none; color:var(--muted); font-size:1.3rem; cursor:pointer; }
+
+/* ── VEHICLE PICKER ── */
+.vehicle-card {
+  display:flex; align-items:center; gap:12px;
+  padding:13px 12px; border:2px solid var(--border);
+  border-radius:10px; margin-bottom:10px; cursor:pointer;
+  transition:border-color 0.15s, background 0.15s;
+  -webkit-tap-highlight-color:transparent;
+}
+.vehicle-card:hover   { border-color:var(--hay); background:rgba(200,168,75,0.06); }
+.vehicle-card.selected{ border-color:var(--bright-green); background:rgba(109,191,90,0.1); }
+.vc-icon  { font-size:2rem; flex-shrink:0; }
+.vc-info  { flex:1; min-width:0; }
+.vc-name  { font-family:'Bebas Neue'; font-size:1.15rem; color:var(--hay); letter-spacing:1px; }
+.vc-specs { font-size:0.62rem; color:var(--muted); margin-top:2px; }
+.vc-edit  { background:none; border:none; color:var(--muted); font-size:1rem; cursor:pointer; padding:6px; flex-shrink:0; }
+.vc-edit:hover { color:var(--hay); }
+.vc-check { font-size:1.1rem; flex-shrink:0; opacity:0; transition:opacity 0.15s; }
+.vehicle-card.selected .vc-check { opacity:1; }
+.add-vehicle-btn {
+  width:100%; padding:13px; background:transparent;
+  border:2px dashed var(--border); border-radius:10px;
+  color:var(--muted); font-family:'Bebas Neue'; font-size:1rem;
+  letter-spacing:2px; cursor:pointer; transition:border-color 0.15s, color 0.15s;
+  margin-bottom:12px;
+}
+.add-vehicle-btn:hover { border-color:var(--hay); color:var(--hay); }
+.picker-confirm-btn {
+  width:100%; padding:15px;
+  background:linear-gradient(135deg,#2d5a23,#3d7a30);
+  border:2px solid var(--bright-green); border-radius:10px;
+  color:#a8f09a; font-family:'Bebas Neue'; font-size:1.2rem;
+  letter-spacing:2px; cursor:pointer;
+}
+.picker-confirm-btn:disabled { background:#2a2a2a; color:#555; border-color:#444; cursor:default; }
+.picker-intro { font-size:0.68rem; color:var(--muted); margin-bottom:14px; line-height:1.6; }
+
+/* ── VEHICLE FORM ── */
+.form-group { margin-bottom:14px; }
+.form-group label { display:block; font-size:0.62rem; color:var(--muted); text-transform:uppercase; letter-spacing:1px; margin-bottom:6px; }
+.form-group input {
+  width:100%; padding:12px; background:var(--bg);
+  border:1px solid var(--border); border-radius:6px;
+  color:var(--text); font-family:'IBM Plex Mono'; font-size:1rem;
+  outline:none; transition:border-color 0.15s;
+}
+.form-group input:focus { border-color:var(--hay); }
+.input-unit { position:relative; }
+.input-unit input { padding-right:38px; }
+.input-unit span { position:absolute; right:12px; top:50%; transform:translateY(-50%); font-size:0.62rem; color:var(--muted); pointer-events:none; }
+.form-row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.form-preview { font-size:0.63rem; color:var(--bright-green); margin-bottom:14px; min-height:1.2em; line-height:1.5; }
+.form-save-btn { width:100%; padding:14px; background:var(--green); border:none; border-radius:8px; color:#fff; font-family:'Bebas Neue'; font-size:1.1rem; letter-spacing:2px; cursor:pointer; }
+.form-delete-btn { width:100%; padding:10px; background:transparent; border:1px solid #5a2020; border-radius:8px; color:#c06060; font-family:'Bebas Neue'; font-size:0.85rem; letter-spacing:2px; cursor:pointer; margin-top:8px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🌾 FIELD TRACKER</h1>
+  <div class="header-right">
+    <div id="vehicle-chip" onclick="openPicker(false)">
+      <span class="chip-icon">🚜</span>
+      <span class="chip-name" id="chip-name">Select Rig</span>
+      <span class="chip-change">▾ CHANGE</span>
+    </div>
+    <div class="status-indicator">
+      <div class="dot" id="status-dot"></div>
+      <span id="status-text">IDLE</span>
+    </div>
+  </div>
+</header>
+
+<div id="map-container">
+  <div id="map"></div>
+
+  <div id="legend">
+    <h3>Loads</h3>
+    <div id="legend-items"></div>
+  </div>
+
+  <div id="gps-info">
+    <div id="gps-coords">GPS: waiting...</div>
+    <div id="gps-accuracy"></div>
+  </div>
+
+  <button id="history-toggle" onclick="toggleHistory()">📋 LOADS</button>
+
+  <div id="history-panel">
+    <button class="close-btn" onclick="toggleHistory()">✕</button>
+    <h3>Load History</h3>
+    <div id="load-list"></div>
+  </div>
+
+  <div id="toast"></div>
+</div>
+
+<div id="controls">
+  <div class="btn-row-top">
+    <button class="btn btn-new" onclick="newLoad()">
+      <span class="icon">🚜</span>NEW LOAD
+    </button>
+    <button class="btn btn-stop" id="btn-stop" onclick="stopSpreading()" disabled>
+      <span class="icon">⏹</span>STOP LOAD
+    </button>
+  </div>
+  <div class="session-info">
+    <div class="session-stat">
+      <div class="num" id="load-count">0</div>
+      <div class="label">Loads</div>
+    </div>
+    <div class="divider"></div>
+    <div class="session-stat">
+      <div class="num sm" id="stat-gal-acre">—</div>
+      <div class="label">Gal/Acre</div>
+    </div>
+    <div class="divider"></div>
+    <div class="session-stat">
+      <div class="num" id="session-dist">0</div>
+      <div class="label">Meters</div>
+    </div>
+    <div class="divider"></div>
+    <div class="session-stat">
+      <div class="num" id="session-time">0:00</div>
+      <div class="label">Time</div>
+    </div>
+  </div>
+  <div class="btn-row-bottom">
+    <button class="btn btn-bottom btn-start" id="btn-start" onclick="startSpreading()" disabled>
+      <span class="icon">▶</span>START
+    </button>
+    <button class="btn btn-bottom btn-pause" id="btn-pause" onclick="pauseSpreading()" disabled>
+      <span class="icon" id="pause-icon">⏸</span><span id="pause-label">PAUSE</span>
+    </button>
+  </div>
+</div>
+
+<!-- VEHICLE PICKER -->
+<div class="modal-backdrop" id="picker-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <h2 id="picker-title">SELECT VEHICLE</h2>
+      <button class="modal-close" id="picker-close-btn" onclick="closePicker()">✕</button>
+    </div>
+    <div class="modal-body">
+      <p class="picker-intro" id="picker-intro"></p>
+      <div id="vehicle-list"></div>
+      <button class="add-vehicle-btn" onclick="openVehicleForm(null)">＋ ADD NEW VEHICLE</button>
+      <button class="picker-confirm-btn" id="picker-confirm" onclick="confirmVehicle()" disabled>USE THIS VEHICLE</button>
+    </div>
+  </div>
+</div>
+
+<!-- VEHICLE FORM -->
+<div class="modal-backdrop" id="form-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <h2 id="form-title">ADD VEHICLE</h2>
+      <button class="modal-close" onclick="closeVehicleForm()">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="form-vehicle-id">
+      <div class="form-group">
+        <label>Nickname / Name</label>
+        <input type="text" id="form-name" placeholder="e.g. Big Red, JD 4440...">
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Tank Capacity</label>
+          <div class="input-unit">
+            <input type="number" id="form-capacity" placeholder="4500" min="1" inputmode="decimal">
+            <span>gal</span>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Working Width</label>
+          <div class="input-unit">
+            <input type="number" id="form-width" placeholder="30" min="1" step="0.5" inputmode="decimal">
+            <span>ft</span>
+          </div>
+        </div>
+      </div>
+      <div class="form-preview" id="form-preview"></div>
+      <button class="form-save-btn" onclick="saveVehicle()">SAVE VEHICLE</button>
+      <button class="form-delete-btn" id="form-delete-btn" onclick="deleteVehicle()" style="display:none">🗑 DELETE THIS VEHICLE</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+// ═══════════════════════════════════════════
+// CONSTANTS
+// ═══════════════════════════════════════════
+const SESSION_COLORS = [
+  '#6dbf5a','#f0c040','#5ab8f0','#f07850','#c05af0',
+  '#f05a8a','#50f0c8','#ffee50','#a8f050','#f09050'
+];
+const SQ_FT_PER_ACRE = 43560;
+const FT_PER_METER   = 3.28084;
+
+// ═══════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════
+let state = {
+  gpsReady: false, currentPos: null,
+  spreading: false, paused: false, currentLoad: null,
+  loads: [], loadCount: 0,
+  sessionStart: null, spreadTimer: null, watchId: null,
+  vehicles: [], activeVehicleId: null,
+  pickerSelectedId: null, isFirstLaunch: false,
+};
+let _pickerIsFirstLaunch = false;
+
+// ═══════════════════════════════════════════
+// LEAFLET MAP
+// ═══════════════════════════════════════════
+const map = L.map('map', {
+  center: [41.5, -93.5],   // default center (Iowa) — snaps to GPS on first fix
+  zoom: 17,
+  zoomControl: false,
+  attributionControl: true,
+});
+
+// Esri World Imagery — free satellite tiles, no key needed
+L.tileLayer(
+  'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+  {
+    attribution: 'Tiles © Esri &mdash; Source: Esri, Maxar, GeoEye, Earthstar Geographics',
+    maxZoom: 19,
+    maxNativeZoom: 19,
+  }
+).addTo(map);
+
+// Current position marker — custom tractor dot
+const posIcon = L.divIcon({
+  className: '',
+  html: '<div id="pos-dot" style="width:18px;height:18px;border-radius:50%;background:#c8a84b;border:3px solid #fff;box-shadow:0 0 8px rgba(0,0,0,0.6);"></div>',
+  iconSize: [18, 18],
+  iconAnchor: [9, 9],
+});
+let posMarker = null;
+
+function updatePosMarker(lat, lng) {
+  if (!posMarker) {
+    posMarker = L.marker([lat, lng], { icon: posIcon, zIndexOffset: 1000 }).addTo(map);
+  } else {
+    posMarker.setLatLng([lat, lng]);
+  }
+  // Update dot color based on state
+  const dot = document.getElementById('pos-dot');
+  if (dot) {
+    dot.style.background = state.spreading ? '#6dbf5a' : state.paused ? '#ffe97a' : '#c8a84b';
+  }
+}
+
+// Polylines for each load — keyed by load id
+const polylines = {}; // id → array of L.polyline segments
+
+function getOrCreatePolylines(load) {
+  if (!polylines[load.id]) polylines[load.id] = [];
+  return polylines[load.id];
+}
+
+function rebuildPolylines(load) {
+  // Remove existing
+  const existing = polylines[load.id] || [];
+  existing.forEach(p => map.removeLayer(p));
+  polylines[load.id] = [];
+
+  if (!load.path || load.path.length < 2) return;
+
+  // Split path into segments at pause/resume boundaries
+  let segment = [];
+  for (const pt of load.path) {
+    if (pt.resumePoint && segment.length > 0) {
+      // End current segment, start new
+      addSegmentPolyline(load, segment);
+      segment = [[pt.lat, pt.lng]];
+      continue;
+    }
+    segment.push([pt.lat, pt.lng]);
+    if (pt.pausePoint && segment.length > 1) {
+      addSegmentPolyline(load, segment);
+      segment = [];
+    }
+  }
+  if (segment.length > 1) addSegmentPolyline(load, segment);
+}
+
+function addSegmentPolyline(load, latlngs) {
+  const pl = L.polyline(latlngs, {
+    color: load.color,
+    weight: 6,
+    opacity: load.endTime ? 0.75 : 1.0,
+    lineCap: 'round',
+    lineJoin: 'round',
+  }).addTo(map);
+  // Tooltip on click
+  pl.bindPopup(`<b>Load #${load.id}</b><br>${load.vehicleName || '—'}${load.galPerAcre ? `<br>${load.galPerAcre} gal/acre` : ''}`);
+  polylines[load.id].push(pl);
+}
+
+function addPointToCurrentPolyline(lat, lng) {
+  if (!state.currentLoad) return;
+  const segs = getOrCreatePolylines(state.currentLoad);
+  if (segs.length === 0) {
+    // Start first segment
+    const pl = L.polyline([[lat, lng]], {
+      color: state.currentLoad.color,
+      weight: 6, opacity: 1.0,
+      lineCap: 'round', lineJoin: 'round',
+    }).addTo(map);
+    segs.push(pl);
+  } else {
+    // Extend last segment
+    segs[segs.length - 1].addLatLng([lat, lng]);
+  }
+}
+
+function startNewPolylineSegment(lat, lng) {
+  if (!state.currentLoad) return;
+  const segs = getOrCreatePolylines(state.currentLoad);
+  const pl = L.polyline([[lat, lng]], {
+    color: state.currentLoad.color,
+    weight: 6, opacity: 1.0,
+    lineCap: 'round', lineJoin: 'round',
+  }).addTo(map);
+  segs.push(pl);
+}
+
+// ═══════════════════════════════════════════
+// PERSIST
+// ═══════════════════════════════════════════
+function saveData() {
+  try {
+    localStorage.setItem('field-tracker-v3', JSON.stringify({
+      loads: state.loads, loadCount: state.loadCount,
+      vehicles: state.vehicles, activeVehicleId: state.activeVehicleId,
+    }));
+  } catch(e) {}
+}
+
+function loadData() {
+  try {
+    const d = JSON.parse(localStorage.getItem('field-tracker-v3') || 'null');
+    if (d) {
+      state.loads           = d.loads           || [];
+      state.loadCount       = d.loadCount       || 0;
+      state.vehicles        = d.vehicles        || [];
+      state.activeVehicleId = d.activeVehicleId || null;
+    }
+  } catch(e) {}
+  if (state.vehicles.length === 0) {
+    state.vehicles = [
+      { id:'v1', name:'Spreader #1', capacityGal:4500, widthFt:30 },
+      { id:'v2', name:'Spreader #2', capacityGal:3200, widthFt:20 },
+    ];
+  }
+  state.isFirstLaunch = !state.activeVehicleId;
+}
+
+// ═══════════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════════
+function activeVehicle() {
+  return state.vehicles.find(v => v.id === state.activeVehicleId) || null;
+}
+
+function calcGalPerAcre(distMeters, vehicle) {
+  if (!vehicle || !distMeters || distMeters < 5) return null;
+  const areaSqFt = (distMeters * FT_PER_METER) * vehicle.widthFt;
+  const acres    = areaSqFt / SQ_FT_PER_ACRE;
+  return acres > 0 ? (vehicle.capacityGal / acres).toFixed(1) : null;
+}
+
+function distBetween(a, b) {
+  const R = 6371000;
+  const dLat = (b.lat - a.lat) * Math.PI / 180;
+  const dLng = (b.lng - a.lng) * Math.PI / 180;
+  const aa = Math.sin(dLat/2)**2 + Math.cos(a.lat*Math.PI/180)*Math.cos(b.lat*Math.PI/180)*Math.sin(dLng/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(aa), Math.sqrt(1-aa));
+}
+
+function updateDist() {
+  if (!state.currentLoad) return;
+  let d = 0;
+  const path = state.currentLoad.path;
+  for (let i = 1; i < path.length; i++) {
+    // Don't count distance across pause gaps
+    if (path[i].resumePoint || path[i-1].pausePoint) continue;
+    d += distBetween(path[i-1], path[i]);
+  }
+  state.currentLoad.distMeters = Math.round(d);
+  const totalDist = state.loads.reduce((s,l) => s+(l.distMeters||0), 0) + state.currentLoad.distMeters;
+  document.getElementById('session-dist').textContent = totalDist;
+  const v = activeVehicle();
+  const ga = calcGalPerAcre(state.currentLoad.distMeters, v);
+  document.getElementById('stat-gal-acre').textContent = ga || '—';
+}
+
+// ═══════════════════════════════════════════
+// GPS
+// ═══════════════════════════════════════════
+function initGPS() {
+  if (!navigator.geolocation) { showToast('GPS NOT SUPPORTED'); return; }
+  navigator.geolocation.getCurrentPosition(onGPSSuccess, onGPSError, { enableHighAccuracy:true, timeout:15000 });
+  state.watchId = navigator.geolocation.watchPosition(onGPSUpdate, onGPSError, { enableHighAccuracy:true, maximumAge:2000 });
+}
+
+function onGPSSuccess(pos) {
+  state.gpsReady = true;
+  const lat = pos.coords.latitude, lng = pos.coords.longitude;
+  map.setView([lat, lng], 17);
+  onGPSUpdate(pos);
+}
+
+function onGPSError(e) {
+  console.warn('GPS error:', e);
+  document.getElementById('gps-coords').textContent = 'GPS: unavailable';
+  // Still mark ready so app is usable (user can pan map manually)
+  if (!state.gpsReady) {
+    state.gpsReady = true;
+    refreshStartBtn();
+    showToast('NO GPS — CHECK PERMISSIONS');
+  }
+}
+
+function onGPSUpdate(pos) {
+  const lat = pos.coords.latitude, lng = pos.coords.longitude;
+  state.currentPos = { lat, lng, accuracy: pos.coords.accuracy };
+  document.getElementById('gps-coords').textContent  = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+  document.getElementById('gps-accuracy').textContent = `±${Math.round(pos.coords.accuracy)}m`;
+
+  updatePosMarker(lat, lng);
+
+  // Keep map centered while spreading (not when user is panning)
+  if (state.spreading) map.panTo([lat, lng], { animate: true, duration: 0.5 });
+
+  if (state.spreading && !state.paused && state.currentLoad) {
+    const path = state.currentLoad.path;
+    if (path.length === 0 || distBetween(path[path.length-1], {lat, lng}) > 3) {
+      state.currentLoad.path.push({ lat, lng, t: Date.now() });
+      addPointToCurrentPolyline(lat, lng);
+      updateDist();
+    }
+  }
+
+  if (!state.gpsReady) {
+    state.gpsReady = true;
+    refreshStartBtn();
+  }
+}
+
+// ═══════════════════════════════════════════
+// LOAD CONTROLS
+// ═══════════════════════════════════════════
+function refreshStartBtn() {
+  const hasLoad   = !!state.currentLoad;
+  const canStart  = state.gpsReady && state.activeVehicleId && hasLoad && !state.spreading && !state.paused;
+  const canPause  = hasLoad && state.spreading;
+  const canResume = hasLoad && state.paused;
+  const canStop   = hasLoad && (state.spreading || state.paused);
+
+  document.getElementById('btn-start').disabled = !canStart;
+  document.getElementById('btn-pause').disabled = !(canPause || canResume);
+  document.getElementById('btn-stop').disabled  = !canStop;
+
+  const pauseBtn = document.getElementById('btn-pause');
+  if (state.paused) {
+    pauseBtn.classList.add('paused');
+    document.getElementById('pause-icon').textContent  = '▶';
+    document.getElementById('pause-label').textContent = 'RESUME';
+  } else {
+    pauseBtn.classList.remove('paused');
+    document.getElementById('pause-icon').textContent  = '⏸';
+    document.getElementById('pause-label').textContent = 'PAUSE';
+  }
+}
+
+function newLoad() {
+  if (state.spreading || state.paused) stopSpreading();
+  if (!state.activeVehicleId) { openPicker(true); return; }
+  createLoad();
+}
+
+function createLoad() {
+  state.loadCount++;
+  const v = activeVehicle();
+  const color = SESSION_COLORS[(state.loadCount-1) % SESSION_COLORS.length];
+  state.currentLoad = {
+    id: state.loadCount, color,
+    vehicleId: state.activeVehicleId,
+    vehicleName: v ? v.name : '—',
+    capacityGal: v ? v.capacityGal : 0,
+    widthFt: v ? v.widthFt : 0,
+    startTime: null, endTime: null, path: [], distMeters: 0, galPerAcre: null,
+  };
+  state.paused = false;
+  document.getElementById('load-count').textContent = state.loadCount;
+  refreshStartBtn();
+  showToast(`LOAD #${state.loadCount} — ${v ? v.name.toUpperCase() : ''}`);
+  updateLegend();
+  saveData();
+}
+
+function startSpreading() {
+  if (!state.currentLoad) { createLoad(); return; }
+  if (!state.currentPos)  { showToast('WAITING FOR GPS'); return; }
+  state.spreading = true;
+  state.paused    = false;
+  state.currentLoad.startTime = state.currentLoad.startTime || Date.now();
+  state.currentLoad.path.push({ lat: state.currentPos.lat, lng: state.currentPos.lng, t: Date.now() });
+  addPointToCurrentPolyline(state.currentPos.lat, state.currentPos.lng);
+  document.getElementById('status-dot').className  = 'dot spreading';
+  document.getElementById('status-text').textContent = 'SPREADING';
+  if (!state.sessionStart) state.sessionStart = Date.now();
+  clearInterval(state.spreadTimer);
+  state.spreadTimer = setInterval(updateTimer, 1000);
+  map.setView([state.currentPos.lat, state.currentPos.lng], 17);
+  refreshStartBtn();
+  showToast('SPREADING STARTED');
+}
+
+function pauseSpreading() {
+  if (!state.currentLoad) return;
+  if (state.paused) {
+    // RESUME — start a fresh polyline segment from current position
+    state.paused    = false;
+    state.spreading = true;
+    if (state.currentPos) {
+      state.currentLoad.path.push({ lat: state.currentPos.lat, lng: state.currentPos.lng, t: Date.now(), resumePoint: true });
+      startNewPolylineSegment(state.currentPos.lat, state.currentPos.lng);
+    }
+    document.getElementById('status-dot').className   = 'dot spreading';
+    document.getElementById('status-text').textContent = 'SPREADING';
+    clearInterval(state.spreadTimer);
+    state.spreadTimer = setInterval(updateTimer, 1000);
+    refreshStartBtn();
+    showToast('RESUMED');
+  } else {
+    // PAUSE — mark last point, stop adding to polyline
+    if (state.currentLoad.path.length > 0) {
+      state.currentLoad.path[state.currentLoad.path.length - 1].pausePoint = true;
+    }
+    state.spreading = false;
+    state.paused    = true;
+    clearInterval(state.spreadTimer);
+    document.getElementById('status-dot').className   = 'dot idle';
+    document.getElementById('status-text').textContent = 'PAUSED';
+    refreshStartBtn();
+    showToast('PAUSED — TURN AROUND');
+  }
+  updatePosMarker(state.currentPos?.lat, state.currentPos?.lng);
+}
+
+function stopSpreading() {
+  if (!state.currentLoad) return;
+  if (!state.spreading && !state.paused) return;
+  state.spreading = false;
+  state.paused    = false;
+  state.currentLoad.endTime = Date.now();
+  const v = state.vehicles.find(v => v.id === state.currentLoad.vehicleId);
+  state.currentLoad.galPerAcre = calcGalPerAcre(state.currentLoad.distMeters, v);
+  // Fade completed polylines
+  const segs = polylines[state.currentLoad.id] || [];
+  segs.forEach(p => p.setStyle({ opacity: 0.75 }));
+  const finished = { ...state.currentLoad, path: [...state.currentLoad.path] };
+  state.loads.push(finished);
+  state.currentLoad = null;
+  document.getElementById('status-dot').className   = 'dot idle';
+  document.getElementById('status-text').textContent = 'IDLE';
+  if (finished.galPerAcre) document.getElementById('stat-gal-acre').textContent = finished.galPerAcre;
+  clearInterval(state.spreadTimer);
+  const gaStr = finished.galPerAcre ? ` · ${finished.galPerAcre} GAL/AC` : '';
+  showToast(`LOAD DONE — ${finished.distMeters}m${gaStr}`);
+  refreshStartBtn();
+  updateLegend();
+  updateLoadList();
+  saveData();
+}
+
+function updateTimer() {
+  if (!state.sessionStart) return;
+  const s = Math.floor((Date.now() - state.sessionStart) / 1000);
+  document.getElementById('session-time').textContent = `${Math.floor(s/60)}:${(s%60).toString().padStart(2,'0')}`;
+}
+
+// ═══════════════════════════════════════════
+// VEHICLE PICKER
+// ═══════════════════════════════════════════
+function openPicker(isFirstLaunch) {
+  _pickerIsFirstLaunch = isFirstLaunch;
+  state.pickerSelectedId = state.activeVehicleId;
+  document.getElementById('picker-title').textContent    = isFirstLaunch ? 'CHOOSE YOUR RIG' : 'CHANGE VEHICLE';
+  document.getElementById('picker-intro').textContent    = isFirstLaunch ? 'Pick your spreader to get started. You can add or change rigs anytime.' : '';
+  document.getElementById('picker-close-btn').style.display = isFirstLaunch ? 'none' : '';
+  renderVehicleList();
+  document.getElementById('picker-modal').classList.add('open');
+}
+function closePicker() {
+  if (_pickerIsFirstLaunch && !state.activeVehicleId) return;
+  document.getElementById('picker-modal').classList.remove('open');
+}
+function confirmVehicle() {
+  if (!state.pickerSelectedId) return;
+  state.activeVehicleId = state.pickerSelectedId;
+  updateVehicleChip();
+  document.getElementById('picker-modal').classList.remove('open');
+  refreshStartBtn();
+  saveData();
+  const v = activeVehicle();
+  if (v) showToast(`RIG: ${v.name.toUpperCase()}`);
+}
+function renderVehicleList() {
+  const list = document.getElementById('vehicle-list');
+  if (!state.vehicles.length) {
+    list.innerHTML = '<p style="color:var(--muted);font-size:0.7rem;margin-bottom:12px;line-height:1.6">No vehicles yet — add one below.</p>';
+    document.getElementById('picker-confirm').disabled = true;
+    return;
+  }
+  list.innerHTML = state.vehicles.map(v => {
+    const sel = v.id === state.pickerSelectedId ? 'selected' : '';
+    return `<div class="vehicle-card ${sel}" onclick="selectVehicleInPicker('${v.id}')">
+      <span class="vc-icon">🚜</span>
+      <div class="vc-info">
+        <div class="vc-name">${v.name}</div>
+        <div class="vc-specs">${v.capacityGal.toLocaleString()} gal &nbsp;·&nbsp; ${v.widthFt} ft wide</div>
+      </div>
+      <span class="vc-check">✅</span>
+      <button class="vc-edit" onclick="event.stopPropagation(); openVehicleForm('${v.id}')">✏️</button>
+    </div>`;
+  }).join('');
+  document.getElementById('picker-confirm').disabled = !state.pickerSelectedId;
+}
+function selectVehicleInPicker(id) {
+  state.pickerSelectedId = id;
+  renderVehicleList();
+  document.getElementById('picker-confirm').disabled = false;
+}
+function updateVehicleChip() {
+  const v = activeVehicle();
+  document.getElementById('chip-name').textContent = v ? v.name : 'Select Rig';
+}
+
+// ═══════════════════════════════════════════
+// VEHICLE FORM
+// ═══════════════════════════════════════════
+function openVehicleForm(vehicleId) {
+  document.getElementById('picker-modal').classList.remove('open');
+  const v = vehicleId ? state.vehicles.find(x => x.id === vehicleId) : null;
+  document.getElementById('form-title').textContent             = v ? 'EDIT VEHICLE' : 'ADD VEHICLE';
+  document.getElementById('form-vehicle-id').value             = vehicleId || '';
+  document.getElementById('form-name').value                   = v ? v.name : '';
+  document.getElementById('form-capacity').value               = v ? v.capacityGal : '';
+  document.getElementById('form-width').value                  = v ? v.widthFt : '';
+  document.getElementById('form-delete-btn').style.display     = v ? 'block' : 'none';
+  document.getElementById('form-preview').textContent          = '';
+  document.getElementById('form-capacity').oninput = updateFormPreview;
+  document.getElementById('form-width').oninput    = updateFormPreview;
+  updateFormPreview();
+  document.getElementById('form-modal').classList.add('open');
+}
+function updateFormPreview() {
+  const cap = parseFloat(document.getElementById('form-capacity').value);
+  const wid = parseFloat(document.getElementById('form-width').value);
+  if (cap > 0 && wid > 0) {
+    const acresPerMile = (5280 * wid) / SQ_FT_PER_ACRE;
+    document.getElementById('form-preview').textContent =
+      `≈ ${(cap / acresPerMile).toFixed(0)} gal/acre · ~${acresPerMile.toFixed(1)} acres/mile`;
+  } else {
+    document.getElementById('form-preview').textContent = '';
+  }
+}
+function closeVehicleForm() {
+  document.getElementById('form-modal').classList.remove('open');
+  setTimeout(() => openPicker(_pickerIsFirstLaunch), 150);
+}
+function saveVehicle() {
+  const name = document.getElementById('form-name').value.trim();
+  const cap  = parseFloat(document.getElementById('form-capacity').value);
+  const wid  = parseFloat(document.getElementById('form-width').value);
+  if (!name)          { showToast('ENTER A NAME');     return; }
+  if (!cap || cap<=0) { showToast('ENTER CAPACITY');   return; }
+  if (!wid || wid<=0) { showToast('ENTER WIDTH');      return; }
+  const editId = document.getElementById('form-vehicle-id').value;
+  if (editId) {
+    const v = state.vehicles.find(x => x.id === editId);
+    if (v) { v.name = name; v.capacityGal = cap; v.widthFt = wid; }
+  } else {
+    const nv = { id: 'v'+Date.now(), name, capacityGal: cap, widthFt: wid };
+    state.vehicles.push(nv);
+    state.pickerSelectedId = nv.id;
+  }
+  saveData(); updateVehicleChip();
+  document.getElementById('form-modal').classList.remove('open');
+  setTimeout(() => openPicker(_pickerIsFirstLaunch), 150);
+}
+function deleteVehicle() {
+  const editId = document.getElementById('form-vehicle-id').value;
+  if (!editId || !confirm('Delete this vehicle?')) return;
+  if (state.activeVehicleId  === editId) { state.activeVehicleId  = null; updateVehicleChip(); }
+  if (state.pickerSelectedId === editId)   state.pickerSelectedId = null;
+  state.vehicles = state.vehicles.filter(v => v.id !== editId);
+  saveData();
+  document.getElementById('form-modal').classList.remove('open');
+  setTimeout(() => openPicker(_pickerIsFirstLaunch), 150);
+}
+
+// ═══════════════════════════════════════════
+// HISTORY & LEGEND
+// ═══════════════════════════════════════════
+function updateLegend() {
+  const items = document.getElementById('legend-items');
+  const all = [...state.loads, ...(state.currentLoad ? [state.currentLoad] : [])];
+  if (!all.length) { items.innerHTML = '<div style="color:var(--muted);font-size:0.6rem">No loads yet</div>'; return; }
+  items.innerHTML = all.slice(-6).map(l => `
+    <div class="legend-item">
+      <div class="legend-swatch" style="background:${l.color}"></div>
+      <span>#${l.id}${!l.endTime?' ●':''}${l.galPerAcre?` · ${l.galPerAcre}g/ac`:''}</span>
+    </div>`).join('');
+}
+function updateLoadList() {
+  const list = document.getElementById('load-list');
+  if (!state.loads.length) { list.innerHTML = '<div style="color:var(--muted);font-size:0.65rem;padding:8px">No loads yet</div>'; return; }
+  list.innerHTML = [...state.loads].reverse().map(l => {
+    const dur = l.endTime && l.startTime ? Math.round((l.endTime-l.startTime)/60000) : 0;
+    return `<div class="load-item">
+      <span class="load-num" style="color:${l.color}">LOAD #${l.id}</span>
+      <div class="load-meta">${l.vehicleName||'—'} · ${dur} min · ${l.distMeters}m</div>
+      ${l.galPerAcre ? `<div class="load-gal-acre">⚗️ ${l.galPerAcre} gal/acre &nbsp;|&nbsp; ${l.capacityGal}gal · ${l.widthFt}ft</div>` : ''}
+    </div>`;
+  }).join('');
+}
+function toggleHistory() {
+  const panel = document.getElementById('history-panel');
+  updateLoadList();
+  panel.classList.toggle('open');
+}
+
+// ═══════════════════════════════════════════
+// TOAST
+// ═══════════════════════════════════════════
+let _toastTimer;
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => t.classList.remove('show'), 2600);
+}
+
+// ═══════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════
+loadData();
+updateVehicleChip();
+updateLegend();
+updateLoadList();
+document.getElementById('load-count').textContent = state.loadCount;
+
+// Replay saved load paths onto the map
+state.loads.forEach(load => rebuildPolylines(load));
+
+// First launch
+if (state.isFirstLaunch) setTimeout(() => openPicker(true), 400);
+
+// Register service worker
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js').catch(e => console.warn('SW:', e));
+}
+
+// Start GPS
+if (navigator.geolocation) {
+  navigator.geolocation.getCurrentPosition(onGPSSuccess, onGPSError, { enableHighAccuracy:true, timeout:10000 });
+  state.watchId = navigator.geolocation.watchPosition(onGPSUpdate, onGPSError, { enableHighAccuracy:true, maximumAge:2000 });
+} else {
+  onGPSError({ message: 'not supported' });
+}
+</script>
+</body>
+</html>
