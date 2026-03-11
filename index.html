@@ -538,7 +538,7 @@ header h1 {
 // CONSTANTS
 // ─────────────────────────────────────────
 // SETUP: After deploying cloudflare-worker.js, paste your Worker URL here:
-const CLAUDE_PROXY = 'https://field-tracker-proxy.gah170.workers.dev';
+const CLAUDE_PROXY = 'https://YOUR-WORKER-NAME.YOUR-NAME.workers.dev';
 // ─────────────────────────────────────────
 // ═══════════════════════════════════════════
 const SESSION_COLORS = [
@@ -1237,6 +1237,9 @@ function startAIBoundary() {
   canvas.height = H;
   canvas.style.height = H + 'px';
 
+  // Use zoom 16 for wider field view
+  _aiBoundaryState.zoom = 16;
+
   // Use Esri static map export
   const bbox = centerToBbox(center.lat, center.lng, _aiBoundaryState.zoom, W, H);
   const imgUrl = `https://server.arcgisonline.com/arcgis/rest/services/World_Imagery/MapServer/export?bbox=${bbox.west},${bbox.south},${bbox.east},${bbox.north}&bboxSR=4326&size=${W},${H}&imageSR=4326&format=jpg&f=image`;
@@ -1257,6 +1260,9 @@ function startAIBoundary() {
   document.getElementById('ai-accept-btn').style.display = 'none';
   document.getElementById('ai-result-info').textContent = '';
   document.getElementById('ai-boundary-modal').classList.add('open');
+  map.dragging.disable();
+  map.touchZoom.disable();
+  map.scrollWheelZoom.disable();
 
   // Load satellite image onto canvas
   const img = new Image();
@@ -1334,11 +1340,14 @@ async function onAICanvasTap(e) {
   document.getElementById('ai-modal-title').textContent = 'ANALYZING...';
   canvas.onclick = null; // disable while processing
 
-  // Convert image to base64 for Claude
+  // Convert image to base64 for Claude — resize to max 512px to stay under API limits
   const offscreen = document.createElement('canvas');
-  offscreen.width = W; offscreen.height = H;
-  offscreen.getContext('2d').drawImage(_aiBoundaryState.tileImg, 0, 0, W, H);
-  const base64 = offscreen.toDataURL('image/jpeg', 0.85).split(',')[1];
+  const maxDim = 512;
+  const scale = Math.min(maxDim / W, maxDim / H, 1);
+  offscreen.width  = Math.round(W * scale);
+  offscreen.height = Math.round(H * scale);
+  offscreen.getContext('2d').drawImage(_aiBoundaryState.tileImg, 0, 0, offscreen.width, offscreen.height);
+  const base64 = offscreen.toDataURL('image/jpeg', 0.7).split(',')[1];
 
   try {
     const boundary = await callClaudeVision(base64, px, py, W, H, bbox, clickLat, clickLng);
@@ -1457,11 +1466,17 @@ function acceptAIBoundary() {
   const name  = document.getElementById('field-form-name').value.trim();
   const acres = parseFloat(document.getElementById('field-form-acres').value) || null;
   document.getElementById('ai-boundary-modal').classList.remove('open');
+  map.dragging.enable();
+  map.touchZoom.enable();
+  map.scrollWheelZoom.enable();
   _saveField(name, acres, _aiBoundaryState.pendingBoundary);
 }
 
 function closeAIBoundary() {
   document.getElementById('ai-boundary-modal').classList.remove('open');
+  map.dragging.enable();
+  map.touchZoom.enable();
+  map.scrollWheelZoom.enable();
   setTimeout(() => {
     document.getElementById('field-form-id').value
       ? openNewFieldForm(document.getElementById('field-form-id').value)
