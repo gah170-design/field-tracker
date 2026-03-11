@@ -547,7 +547,7 @@ header h1 {
 // CONSTANTS
 // ─────────────────────────────────────────
 // SETUP: After deploying cloudflare-worker.js, paste your Worker URL here:
-const CLAUDE_PROXY = 'https://field-tracker-proxy.gah170.workers.dev';
+const CLAUDE_PROXY = 'https://YOUR-WORKER-NAME.YOUR-NAME.workers.dev';
 // ─────────────────────────────────────────
 // ═══════════════════════════════════════════
 const SESSION_COLORS = [
@@ -764,20 +764,10 @@ function updateDist() {
 // ═══════════════════════════════════════════
 // GPS
 // ═══════════════════════════════════════════
-let _firstFix = true; // fly to location on very first GPS fix
-
-function initGPS() {
-  if (!navigator.geolocation) { showToast('GPS NOT SUPPORTED'); return; }
-  // watchPosition alone is enough — no need for separate getCurrentPosition
-  state.watchId = navigator.geolocation.watchPosition(onGPSUpdate, onGPSError, {
-    enableHighAccuracy: true,
-    maximumAge: 0,        // never use a cached position
-    timeout: 30000,
-  });
-}
+let _bestAccuracy = Infinity;
+let _mapCentered  = false;
 
 function onGPSSuccess(pos) {
-  // kept for compatibility but watchPosition handles everything now
   onGPSUpdate(pos);
 }
 
@@ -792,18 +782,24 @@ function onGPSError(e) {
 }
 
 function onGPSUpdate(pos) {
-  const lat = pos.coords.latitude, lng = pos.coords.longitude;
+  const lat = pos.coords.latitude;
+  const lng = pos.coords.longitude;
   const acc = pos.coords.accuracy;
+
+  // Always update displayed coords and marker
   state.currentPos = { lat, lng, accuracy: acc };
   document.getElementById('gps-coords').textContent   = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
-  document.getElementById('gps-accuracy').textContent = `±${Math.round(acc)}m`;
-
+  document.getElementById('gps-accuracy').textContent = acc <= 20  ? `±${Math.round(acc)}m ✓`
+                                                       : acc <= 100 ? `±${Math.round(acc)}m (improving...)`
+                                                       :              `±${Math.round(acc)}m ⚠ weak`;
   updatePosMarker(lat, lng);
 
-  // On very first fix, fly straight to the actual location at field zoom
-  if (_firstFix) {
-    _firstFix = false;
-    map.flyTo([lat, lng], 17, { animate: true, duration: 1.2 });
+  // Center map whenever we get a meaningfully better fix than before
+  // This keeps re-centering as GPS improves from coarse→fine
+  if (acc < _bestAccuracy - 10 || (!_mapCentered && acc < 500)) {
+    _bestAccuracy = acc;
+    _mapCentered  = true;
+    map.flyTo([lat, lng], 17, { animate: true, duration: 1.0 });
   }
 
   // Keep map centered while spreading
@@ -811,9 +807,11 @@ function onGPSUpdate(pos) {
     map.panTo([lat, lng], { animate: true, duration: 0.5 });
   }
 
-  if (state.spreading && !state.paused && state.currentLoad) {
+  // Add path point — only when accuracy is reasonable (under 50m)
+  // and position has moved at least 2 meters from last point
+  if (state.spreading && !state.paused && state.currentLoad && acc <= 50) {
     const path = state.currentLoad.path;
-    if (path.length === 0 || distBetween(path[path.length-1], {lat, lng}) > 3) {
+    if (path.length === 0 || distBetween(path[path.length-1], {lat, lng}) > 2) {
       state.currentLoad.path.push({ lat, lng, t: Date.now() });
       addPointToCurrentPolyline(lat, lng);
       updateDist();
@@ -823,7 +821,7 @@ function onGPSUpdate(pos) {
   if (!state.gpsReady) {
     state.gpsReady = true;
     refreshStartBtn();
-    showToast('GPS LOCKED');
+    showToast(acc <= 20 ? 'GPS LOCKED ✓' : 'GPS READY — ACCURACY IMPROVING');
   }
 }
 
@@ -889,8 +887,11 @@ function createLoad(fieldId) {
 }
 
 function startSpreading() {
-  if (!state.currentLoad) { createLoad(); return; }
+  if (!state.currentLoad) { createLoad(null); return; }
   if (!state.currentPos)  { showToast('WAITING FOR GPS'); return; }
+  const acc = state.currentPos.accuracy;
+  if (acc > 200) { showToast(`GPS TOO WEAK ±${Math.round(acc)}m — WAIT`); return; }
+  if (acc > 50)  { showToast(`GPS WEAK ±${Math.round(acc)}m — ACCURACY IMPROVING`); }
   state.spreading = true;
   state.paused    = false;
   state.currentLoad.startTime = state.currentLoad.startTime || Date.now();
@@ -1601,7 +1602,11 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js').catch(e => console.warn('SW:', e));
 }
 
-// Start GPS — watchPosition with maximumAge:0 forces a fresh fix every time
+// Reset GPS tracking state
+_bestAccuracy = Infinity;
+_mapCentered  = false;
+
+// Start GPS — maximumAge:0 forces fresh fix, no cached positions
 if (navigator.geolocation) {
   state.watchId = navigator.geolocation.watchPosition(onGPSUpdate, onGPSError, {
     enableHighAccuracy: true,
